@@ -361,19 +361,34 @@ msg_ok "Configured .env file and data directory"
 msg_info "Building Mindwtr Monorepo, Web PWA & Cloud..."
 cd /opt/mindwtr
 
-# 1. Install root dependencies with Bun / npm and run workspace builds
+# 1. Install root dependencies with Bun / npm and run workspace builds dynamically
 if [ -f "package.json" ]; then
-  msg_info "Installing root packages..."
-  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build:web || bun run build:desktop || bun run build || npm run build || true)
+  msg_info "Installing monorepo root dependencies..."
+  (bun install 2>/dev/null || npm install --legacy-peer-deps 2>/dev/null || true)
+  
+  ROOT_SCRIPTS=$(node -e "try { const p = require('./package.json'); console.log(Object.keys(p.scripts || {}).join(' ')); } catch(e) {}" 2>/dev/null || true)
+  for SCRIPT in "build:app" "build:web" "build:pwa" "build:desktop" "build"; do
+    if echo "\$ROOT_SCRIPTS" | grep -qw "\$SCRIPT"; then
+      msg_info "Running script: \$SCRIPT..."
+      (bun run "\$SCRIPT" 2>/dev/null || npm run "\$SCRIPT" 2>/dev/null || true)
+    fi
+  done
 fi
 
 # 2. Build apps/desktop (Tauri / Web frontend) if present
 if [ -d "/opt/mindwtr/apps/desktop" ]; then
   msg_info "Building apps/desktop frontend..."
   cd /opt/mindwtr/apps/desktop
-  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build || npm run build || true)
+  (bun install 2>/dev/null || npm install --legacy-peer-deps 2>/dev/null || true)
+  DESKTOP_SCRIPTS=$(node -e "try { const p = require('./package.json'); console.log(Object.keys(p.scripts || {}).join(' ')); } catch(e) {}" 2>/dev/null || true)
+  for SCRIPT in "build" "build:web" "build:app" "vite:build"; do
+    if echo "\$DESKTOP_SCRIPTS" | grep -qw "\$SCRIPT"; then
+      (bun run "\$SCRIPT" 2>/dev/null || npm run "\$SCRIPT" 2>/dev/null || true)
+    fi
+  done
+  if [ ! -d "dist" ] && [ -f "node_modules/.bin/vite" ]; then
+    ./node_modules/.bin/vite build 2>/dev/null || true
+  fi
   cd /opt/mindwtr
 fi
 
@@ -381,8 +396,16 @@ fi
 if [ -d "/opt/mindwtr/apps/web" ]; then
   msg_info "Building apps/web frontend..."
   cd /opt/mindwtr/apps/web
-  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build || npm run build || true)
+  (bun install 2>/dev/null || npm install --legacy-peer-deps 2>/dev/null || true)
+  WEB_SCRIPTS=$(node -e "try { const p = require('./package.json'); console.log(Object.keys(p.scripts || {}).join(' ')); } catch(e) {}" 2>/dev/null || true)
+  for SCRIPT in "build" "build:web" "build:app" "vite:build"; do
+    if echo "\$WEB_SCRIPTS" | grep -qw "\$SCRIPT"; then
+      (bun run "\$SCRIPT" 2>/dev/null || npm run "\$SCRIPT" 2>/dev/null || true)
+    fi
+  done
+  if [ ! -d "dist" ] && [ -f "node_modules/.bin/vite" ]; then
+    ./node_modules/.bin/vite build 2>/dev/null || true
+  fi
   cd /opt/mindwtr
 fi
 
@@ -390,8 +413,13 @@ fi
 if [ -d "/opt/mindwtr/packages/web" ]; then
   msg_info "Building packages/web frontend..."
   cd /opt/mindwtr/packages/web
-  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build || npm run build || true)
+  (bun install 2>/dev/null || npm install --legacy-peer-deps 2>/dev/null || true)
+  PKG_SCRIPTS=$(node -e "try { const p = require('./package.json'); console.log(Object.keys(p.scripts || {}).join(' ')); } catch(e) {}" 2>/dev/null || true)
+  for SCRIPT in "build" "build:web"; do
+    if echo "\$PKG_SCRIPTS" | grep -qw "\$SCRIPT"; then
+      (bun run "\$SCRIPT" 2>/dev/null || npm run "\$SCRIPT" 2>/dev/null || true)
+    fi
+  done
   cd /opt/mindwtr
 fi
 
@@ -399,8 +427,13 @@ fi
 if [ -d "/opt/mindwtr/apps/cloud" ]; then
   msg_info "Setting up apps/cloud server dependencies..."
   cd /opt/mindwtr/apps/cloud
-  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build || npm run build || true)
+  (bun install 2>/dev/null || npm install --legacy-peer-deps 2>/dev/null || true)
+  CLOUD_SCRIPTS=$(node -e "try { const p = require('./package.json'); console.log(Object.keys(p.scripts || {}).join(' ')); } catch(e) {}" 2>/dev/null || true)
+  for SCRIPT in "build" "compile"; do
+    if echo "\$CLOUD_SCRIPTS" | grep -qw "\$SCRIPT"; then
+      (bun run "\$SCRIPT" 2>/dev/null || npm run "\$SCRIPT" 2>/dev/null || true)
+    fi
+  done
   cd /opt/mindwtr
 fi
 
