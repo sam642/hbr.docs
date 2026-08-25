@@ -1,0 +1,6 @@
+{
+  "name": "Proxmox Community Scripts - Mindwtr LXC Installer",
+  "description": "Interactive Proxmox VE Helper Script hub and LXC container installer for Mindwtr (GTD open-source productivity app), compatible with community-scripts.org.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
