@@ -903,8 +903,15 @@ fi
 echo -e "\${GN}[OK] Container network active on IP: $IP\${CL}"
 
 # Execute Provisioning Inside Container
-echo -e "\\n\${YW}[4/6] Provisioning OS, Dependencies, Node.js 22 LTS & Bun runtime...\${CL}"
-pct exec "$CTID" -- bash -c "
+echo -e "\\n\${YW}[4/5] Provisioning OS, Node.js 22, Bun Runtime & Mindwtr Cloud...\${CL}"
+pct exec "$CTID" -- env \\
+  GITHUB_USER="${user}" \\
+  GITHUB_REPO="${repo}" \\
+  GITHUB_BRANCH="${branch}" \\
+  WEB_PORT="${config.webPort}" \\
+  SYNC_PORT="${config.syncPort}" \\
+  AUTH_TOKEN="\${AUTH_TOKEN}" \\
+  bash << 'EOF_CONTAINER_INSTALL'
   set -e
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -918,21 +925,19 @@ pct exec "$CTID" -- bash -c "
   apt-get install -y nodejs
   npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
 
+  # Install Bun Runtime
   curl -fsSL https://bun.sh/install | bash || true
   export BUN_INSTALL="/root/.bun"
-  export PATH="\$BUN_INSTALL/bin:/usr/local/bin:\$PATH"
+  export PATH="$BUN_INSTALL/bin:/usr/local/bin:$PATH"
   if [ -f "/root/.bun/bin/bun" ]; then
     cp /root/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true
     chmod +x /usr/local/bin/bun 2>/dev/null || true
   fi
   npm install -g tsx pnpm bun --legacy-peer-deps 2>/dev/null || true
-"
 
-echo -e "\\n\${YW}[5/6] Deploying Mindwtr GTD & Sync Server from https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}...\${CL}"
-pct exec "$CTID" -- bash -c "
-  set -e
+  # Clone Mindwtr
   mkdir -p /opt/mindwtr
-  git clone -b ${branch} https://github.com/${user}/${repo}.git /opt/mindwtr
+  git clone -b "\${GITHUB_BRANCH}" "https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}.git" /opt/mindwtr
   cd /opt/mindwtr
 
   # Configure .npmrc to avoid peer dependency conflicts
@@ -943,11 +948,11 @@ audit=false
 NPMRC
 
   # Create Cloud Environment
-  cat << 'ENVFILE' > /opt/mindwtr/.env
-PORT=${config.syncPort}
-MINDWTR_CLOUD_AUTH_TOKENS=\"\${AUTH_TOKEN}\"
-MINDWTR_CLOUD_CORS_ORIGIN=\"*\"
-DATA_DIR=\"/opt/mindwtr/data\"
+  cat << ENVFILE > /opt/mindwtr/.env
+PORT=\${SYNC_PORT}
+MINDWTR_CLOUD_AUTH_TOKENS="\${AUTH_TOKEN}"
+MINDWTR_CLOUD_CORS_ORIGIN="*"
+DATA_DIR="/opt/mindwtr/data"
 ENVFILE
 
   mkdir -p /opt/mindwtr/data
@@ -955,20 +960,20 @@ ENVFILE
 
   # Build root & subprojects
   if [ -f package.json ]; then
-    (bun install || npm install --legacy-peer-deps || npm install --force || true)
-    (bun run build || npm run build || true)
+    bun install || npm install --legacy-peer-deps || npm install --force || true
+    bun run build || npm run build || true
   fi
 
   if [ -d "/opt/mindwtr/apps/web" ]; then
     cd /opt/mindwtr/apps/web
-    (bun install || npm install --legacy-peer-deps || npm install --force || true)
-    (bun run build || npm run build || true)
+    bun install || npm install --legacy-peer-deps || npm install --force || true
+    bun run build || npm run build || true
     cd /opt/mindwtr
   fi
 
   if [ -d "/opt/mindwtr/apps/cloud" ]; then
     cd /opt/mindwtr/apps/cloud
-    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    bun install || npm install --legacy-peer-deps || npm install --force || true
     cd /opt/mindwtr
   fi
 
@@ -994,7 +999,8 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Mindwtr-Token');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-  const url = new URL(req.url, \`http://\${req.headers.host || 'localhost'}\`);
+  const host = req.headers.host || 'localhost';
+  const url = new URL(req.url, 'http://' + host);
   if (url.pathname === '/health' || url.pathname === '/api/health' || url.pathname === '/v1/health' || url.pathname === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud', version: '1.0.0', tasksCount: store.tasks ? store.tasks.length : 0 }));
@@ -1039,8 +1045,8 @@ SRVJS
 
   mkdir -p /var/www/mindwtr
   for DIR in "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/packages/web/dist"; do
-    if [ -d "\$DIR" ] && [ -f "\$DIR/index.html" ]; then
-      cp -r "\$DIR"/* /var/www/mindwtr/
+    if [ -d "$DIR" ] && [ -f "$DIR/index.html" ]; then
+      cp -r "$DIR"/* /var/www/mindwtr/
       break
     fi
   done
@@ -1049,10 +1055,10 @@ SRVJS
   chmod -R 755 /var/www/mindwtr /opt/mindwtr
 
   # Configure Nginx Web Server
-  cat << 'NGINXCONF' > /etc/nginx/sites-available/mindwtr
+  cat << NGINXCONF > /etc/nginx/sites-available/mindwtr
 server {
-    listen ${config.webPort} default_server;
-    listen [::]:${config.webPort} default_server;
+    listen \${WEB_PORT} default_server;
+    listen [::]:\${WEB_PORT} default_server;
     server_name _;
     root /var/www/mindwtr;
     index index.html index.htm;
@@ -1062,7 +1068,7 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:${config.syncPort}/;
+        proxy_pass http://127.0.0.1:\${SYNC_PORT}/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -1071,13 +1077,13 @@ server {
     }
 
     location /health {
-        proxy_pass http://127.0.0.1:${config.syncPort}/health;
+        proxy_pass http://127.0.0.1:\${SYNC_PORT}/health;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
     }
 
     location /v1/ {
-        proxy_pass http://127.0.0.1:${config.syncPort}/v1/;
+        proxy_pass http://127.0.0.1:\${SYNC_PORT}/v1/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
     }
@@ -1093,7 +1099,7 @@ NGINXCONF
 set -a
 [ -f /opt/mindwtr/.env ] && source /opt/mindwtr/.env
 set +a
-export PATH="/usr/local/bin:/root/.bun/bin:\$PATH"
+export PATH="/usr/local/bin:/root/.bun/bin:$PATH"
 cd /opt/mindwtr
 if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
   exec bun run apps/cloud/src/server.ts
@@ -1102,11 +1108,11 @@ elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
 elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
   exec bun run apps/cloud/server.ts
 elif [ -f "apps/cloud/package.json" ]; then
-  cd apps/cloud && (exec bun run start 2>/dev/null || exec npm start)
+  cd apps/cloud && (bun run start 2>/dev/null || npm start)
 elif [ -f "server.js" ]; then
   exec /usr/bin/node /opt/mindwtr/server.js
 else
-  exec /usr/bin/node -e "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok'}));}).listen(${config.syncPort||8787},'0.0.0.0');"
+  exec /usr/bin/node -e "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok'}));}).listen(process.env.PORT||8787,'0.0.0.0');"
 fi
 RUNNER
   chmod +x /usr/local/bin/mindwtr-cloud-run
@@ -1132,26 +1138,19 @@ SRVCONF
 
   systemctl daemon-reload
   systemctl enable --now mindwtr-cloud 2>/dev/null || true
-"
+  systemctl restart mindwtr-cloud 2>/dev/null || true
 
-echo -e "\\n\${YW}[6/6] Finalizing Configuration and MOTD...\${CL}"
-pct exec "$CTID" -- bash -c "
   cat << 'MOTD' > /etc/motd
 ===================================================================
-   __  __ _           _          _       
-  |  \\/  (_)_ __   __| |_      _| |_ _ __ 
-  | |\\/| | | '_ \\ / _\` \\ \\ /\\ / / __| '__|
-  | |  | | | | | | (_| |\\ V  V /| |_| |   
-  |_|  |_|_|_| |_|\\__,_| \\_/\\_/  \\__|_|   
+  Mindwtr GTD Productivity System (Proxmox LXC)
 ===================================================================
-  Mindwtr GTD Productivity System
-  * Web Client:  http://\\$(hostname -I | awk '{print \\$1}'):${config.webPort}
-  * Sync Server: http://\\$(hostname -I | awk '{print \\$1}'):${config.syncPort}
-  * Source Repo: https://github.com/${user}/${repo}
-  * Auth Token:  \${AUTH_TOKEN}
+  * Web Client:  http://\$(hostname -I | awk '{print \$1}'):\${WEB_PORT}
+  * Sync Server: http://\$(hostname -I | awk '{print \$1}'):\${SYNC_PORT}
+  * Health Check:http://\$(hostname -I | awk '{print \$1}'):\${SYNC_PORT}/health
+  * Source Repo: https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}
 ===================================================================
 MOTD
-"
+EOF_CONTAINER_INSTALL
 
 echo -e "\\n\${GN}=======================================================\${CL}"
 echo -e "\${GN}✔ Mindwtr LXC Container #\$CTID Installed Successfully!\${CL}"

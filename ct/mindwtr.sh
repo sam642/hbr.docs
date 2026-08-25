@@ -56,24 +56,24 @@ function update_script() {
     exit 1
   fi
   msg_info "Updating ${APP} LXC Container directly from GitHub (${GITHUB_USER}/${GITHUB_REPO})"
-  pct exec "${CTID:-105}" -- bash -c "
+  pct exec "${CTID:-105}" -- env GITHUB_BRANCH="${GITHUB_BRANCH}" bash << 'EOF_UPDATE'
     set -e
     systemctl stop mindwtr-cloud nginx 2>/dev/null || true
     cd /opt/mindwtr
-    git pull origin ${GITHUB_BRANCH}
+    git pull origin "${GITHUB_BRANCH:-main}"
     if [ -f package.json ]; then
       npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
       npm run build || true
     fi
-    if [ -d \"/opt/mindwtr/apps/web/dist\" ]; then
+    if [ -d "/opt/mindwtr/apps/web/dist" ]; then
       cp -r /opt/mindwtr/apps/web/dist/* /var/www/mindwtr/ 2>/dev/null || true
-    elif [ -d \"/opt/mindwtr/dist\" ]; then
+    elif [ -d "/opt/mindwtr/dist" ]; then
       cp -r /opt/mindwtr/dist/* /var/www/mindwtr/ 2>/dev/null || true
     fi
     chown -R www-data:www-data /var/www/mindwtr 2>/dev/null || true
     chmod -R 755 /var/www/mindwtr
     systemctl restart mindwtr-cloud nginx
-  "
+EOF_UPDATE
   msg_ok "Updated ${APP} Successfully"
   exit 0
 }
