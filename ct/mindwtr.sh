@@ -86,9 +86,52 @@ if ! pvesm status -storage "$STORAGE" &>/dev/null; then
   fi
 fi
 
-# Container ID Auto-Detection
-NEXTID=$(pvesh get /cluster/nextid)
-CTID="${CTID:-$NEXTID}"
+# Robust Container/VM ID Resolver (Handles non-sequential IDs, QEMU VMs, and orphaned configs)
+function get_available_id() {
+  local target_id="${1:-}"
+  local candidate_id
+
+  if [[ -n "$target_id" ]] && [[ "$target_id" =~ ^[0-9]+$ ]] && (( target_id >= 100 )); then
+    candidate_id="$target_id"
+  else
+    local cluster_next
+    cluster_next=$(pvesh get /cluster/nextid 2>/dev/null | tr -d '"' | tr -d ' ' | grep -E '^[0-9]+$' || true)
+    if [[ -n "$cluster_next" ]] && (( cluster_next >= 100 )); then
+      candidate_id="$cluster_next"
+    else
+      candidate_id=100
+    fi
+  fi
+
+  # Scan past any non-sequential gaps, active/stopped LXCs, QEMU VMs, or config files
+  while true; do
+    local in_use=0
+    if pct status "$candidate_id" &>/dev/null; then
+      in_use=1
+    elif command -v qm &>/dev/null && qm status "$candidate_id" &>/dev/null; then
+      in_use=1
+    elif [[ -f "/etc/pve/lxc/${candidate_id}.conf" ]] || [[ -f "/etc/pve/nodes/$(hostname)/lxc/${candidate_id}.conf" ]]; then
+      in_use=1
+    elif [[ -f "/etc/pve/qemu-server/${candidate_id}.conf" ]] || [[ -f "/etc/pve/nodes/$(hostname)/qemu-server/${candidate_id}.conf" ]]; then
+      in_use=1
+    fi
+
+    if [[ "$in_use" -eq 0 ]]; then
+      echo "$candidate_id"
+      return 0
+    fi
+
+    candidate_id=$((candidate_id + 1))
+  done
+}
+
+# Container ID Auto-Detection and Non-Sequential ID Safety Resolution
+REQUESTED_CTID="${CTID:-}"
+RESOLVED_CTID=$(get_available_id "$REQUESTED_CTID")
+if [[ -n "$REQUESTED_CTID" ]] && [[ "$REQUESTED_CTID" != "$RESOLVED_CTID" ]]; then
+  msg_info "Notice: Requested ID ${REQUESTED_CTID} is already taken by an existing CT/VM. Auto-assigned next available ID: ${RESOLVED_CTID}"
+fi
+CTID="$RESOLVED_CTID"
 HN="${HN:-mindwtr}"
 BRG="${BRG:-vmbr0}"
 

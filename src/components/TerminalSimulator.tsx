@@ -80,8 +80,8 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
       action: () => {
         addLog('info', `Detecting default storage pool...`);
         addLog('ok', `Storage local-lvm available with 240.5 GB free space`);
-        addLog('info', `Resolving next available Container ID...`);
-        addLog('ok', `Allocated CT ID: ${config.ctId}`);
+        addLog('info', `Scanning cluster for active/stopped LXCs, QEMU VMs, and non-sequential ID gaps...`);
+        addLog('ok', `Allocated non-conflicting Container ID: CT ${config.ctId} (safe across VM & CT namespaces)`);
       },
       delay: 900,
     },
