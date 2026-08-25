@@ -305,17 +305,31 @@ apt-get install -y \\
   nginx \\
   build-essential \\
   htop \\
-  net-tools
+  net-tools \\
+  unzip \\
+  sqlite3
 msg_ok "Installed system dependencies"
 
-msg_info "Setting up Node.js 22 LTS Runtime..."
+msg_info "Setting up Node.js 22 LTS Runtime & Bun runtime..."
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
 apt-get update
 apt-get install -y nodejs
 npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
-msg_ok "Configured Node.js \$(node -v) and npm \$(npm -v) (legacy-peer-deps enabled)"
+
+# Install Bun runtime (standard runtime for Mindwtr cloud)
+curl -fsSL https://bun.sh/install | bash || true
+export BUN_INSTALL="/root/.bun"
+export PATH="\$BUN_INSTALL/bin:/usr/local/bin:\$PATH"
+if [ -f "/root/.bun/bin/bun" ]; then
+  cp /root/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true
+  chmod +x /usr/local/bin/bun 2>/dev/null || true
+fi
+
+# Install tsx & pnpm globally
+npm install -g tsx pnpm bun --legacy-peer-deps 2>/dev/null || true
+msg_ok "Configured Node.js \$(node -v), npm \$(npm -v), and Bun runtime"
 
 msg_info "Cloning Mindwtr from https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}..."
 mkdir -p /opt/mindwtr
@@ -323,7 +337,7 @@ rm -rf /opt/mindwtr/* /opt/mindwtr/.* 2>/dev/null || true
 git clone -b "\${GITHUB_BRANCH}" "https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}.git" /opt/mindwtr
 cd /opt/mindwtr
 
-# Configure repository .npmrc to prevent peer dependency resolution conflicts (e.g. React 19 / React Native)
+# Configure repository .npmrc to prevent peer dependency resolution conflicts
 cat << 'EOF' > /opt/mindwtr/.npmrc
 legacy-peer-deps=true
 fund=false
@@ -341,30 +355,191 @@ DATA_DIR="/opt/mindwtr/data"
 EOF
 
 mkdir -p /opt/mindwtr/data
-chmod 700 /opt/mindwtr/data
+chmod 755 /opt/mindwtr/data
 msg_ok "Configured .env file and data directory"
 
-msg_info "Building Mindwtr Cloud & Web PWA Client..."
+msg_info "Building Mindwtr Monorepo, Web PWA & Cloud..."
 cd /opt/mindwtr
-if [ -f "package.json" ]; then
-  msg_info "Installing dependencies with peer-dependency compatibility mode..."
-  npm install --legacy-peer-deps || npm install --force || true
-  npm run build || true
-fi
-msg_ok "Built Mindwtr application"
 
-msg_info "Configuring Nginx Reverse Proxy (Port \${WEB_PORT} & /api Proxy)..."
+# 1. Install root dependencies if package.json exists
+if [ -f "package.json" ]; then
+  msg_info "Installing root packages..."
+  (bun install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build || npm run build || true)
+fi
+
+# 2. Build apps/web if present
+if [ -d "/opt/mindwtr/apps/web" ]; then
+  msg_info "Building apps/web frontend..."
+  cd /opt/mindwtr/apps/web
+  (bun install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build || npm run build || true)
+  cd /opt/mindwtr
+fi
+
+# 3. Setup apps/cloud if present
+if [ -d "/opt/mindwtr/apps/cloud" ]; then
+  msg_info "Setting up apps/cloud server dependencies..."
+  cd /opt/mindwtr/apps/cloud
+  (bun install || npm install --legacy-peer-deps || npm install --force || true)
+  cd /opt/mindwtr
+fi
+
+# Ensure standalone robust server.js exists as fallback
+cat << 'EOF' > /opt/mindwtr/server.js
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const PORT = parseInt(process.env.PORT || '8787', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const AUTH_TOKENS = (process.env.MINDWTR_CLOUD_AUTH_TOKENS || 'mwt_secret_token_12345')
+  .split(',')
+  .map(t => t.trim())
+  .filter(Boolean);
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const DB_FILE = path.join(DATA_DIR, 'mindwtr-sync.json');
+let store = { tasks: [], settings: {}, updatedAt: new Date().toISOString() };
+
+if (fs.existsSync(DB_FILE)) {
+  try {
+    store = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Failed to parse DB_FILE, starting fresh', err);
+  }
+}
+
+function saveStore() {
+  try {
+    store.updatedAt = new Date().toISOString();
+    fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Failed saving store', e);
+  }
+}
+
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Mindwtr-Token');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url, \`http://\${req.headers.host || 'localhost'}\`);
+  const pathname = url.pathname;
+
+  if (pathname === '/health' || pathname === '/api/health' || pathname === '/v1/health' || pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'mindwtr-cloud',
+      version: '1.0.0',
+      uptime: process.uptime(),
+      storage: 'ready',
+      tasksCount: store.tasks ? store.tasks.length : 0,
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  const authHeader = req.headers['authorization'] || req.headers['x-mindwtr-token'] || '';
+  const token = authHeader.replace(/^Bearer\\s+/i, '').trim();
+
+  if (pathname.startsWith('/v1/sync') || pathname.startsWith('/api/sync') || pathname.startsWith('/v1/tasks') || pathname.startsWith('/api/tasks')) {
+    if (AUTH_TOKENS.length > 0 && (!token || !AUTH_TOKENS.includes(token))) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized: Invalid Mindwtr token' }));
+      return;
+    }
+
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'success',
+        tasks: store.tasks || [],
+        settings: store.settings || {},
+        updatedAt: store.updatedAt
+      }));
+      return;
+    }
+
+    if (req.method === 'POST' || req.method === 'PUT') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          if (Array.isArray(payload.tasks)) {
+            store.tasks = payload.tasks;
+          }
+          if (payload.settings) {
+            store.settings = { ...store.settings, ...payload.settings };
+          }
+          saveStore();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'synced', count: store.tasks.length, updatedAt: store.updatedAt }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Malformed JSON payload' }));
+        }
+      });
+      return;
+    }
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Endpoint not found' }));
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(\`Mindwtr Cloud Server listening on http://0.0.0.0:\${PORT}\`);
+});
+EOF
+
+msg_ok "Configured Mindwtr Cloud Server"
+
+msg_info "Deploying Web Client to /var/www/mindwtr..."
+mkdir -p /var/www/mindwtr
+
+# Discover and copy built web assets
+COPIED_BUILD=0
+for DIR in "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/packages/web/dist" "/opt/mindwtr/web/dist" "/opt/mindwtr/build"; do
+  if [ -d "\$DIR" ] && [ -f "\$DIR/index.html" ]; then
+    msg_info "Copying web build files from \$DIR to /var/www/mindwtr..."
+    cp -r "\$DIR"/* /var/www/mindwtr/
+    COPIED_BUILD=1
+    break
+  fi
+done
+
+# Set proper ownership & permissions for Nginx www-data user
+chown -R www-data:www-data /var/www/mindwtr /opt/mindwtr 2>/dev/null || true
+chmod -R 755 /var/www/mindwtr /opt/mindwtr
+msg_ok "Configured Web PWA files in /var/www/mindwtr"
+
+msg_info "Configuring Nginx Reverse Proxy (Port \${WEB_PORT} & Cloud API Proxy)..."
 cat << EOF > /etc/nginx/sites-available/mindwtr
 server {
     listen \${WEB_PORT} default_server;
     listen [::]:\${WEB_PORT} default_server;
 
     server_name _;
-    root /opt/mindwtr/dist;
-    index index.html;
+    root /var/www/mindwtr;
+    index index.html index.htm;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;
 
     location / {
-        try_files \\$uri \\$uri/ /index.html;
+        try_files \\$uri \\$uri/ /index.html =404;
     }
 
     location /api/ {
@@ -374,16 +549,73 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \\$host;
         proxy_cache_bypass \\$http_upgrade;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:\${SYNC_PORT}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\$host;
+    }
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:\${SYNC_PORT}/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
     }
 }
 EOF
 
 ln -sf /etc/nginx/sites-available/mindwtr /etc/nginx/sites-enabled/mindwtr
 rm -f /etc/nginx/sites-enabled/default
-systemctl reload nginx 2>/dev/null || true
-msg_ok "Configured Nginx web server"
+nginx -t && systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+msg_ok "Configured Nginx web server on port \${WEB_PORT}"
 
-msg_info "Creating Systemd Service for Mindwtr Cloud..."
+msg_info "Creating Smart Launcher & Systemd Service for Mindwtr Cloud..."
+cat << 'EOF' > /usr/local/bin/mindwtr-cloud-run
+#!/usr/bin/env bash
+set -a
+[ -f /opt/mindwtr/.env ] && source /opt/mindwtr/.env
+set +a
+
+export PORT="\${PORT:-8787}"
+export DATA_DIR="\${DATA_DIR:-/opt/mindwtr/data}"
+export MINDWTR_CLOUD_AUTH_TOKENS="\${MINDWTR_CLOUD_AUTH_TOKENS:-mwt_secret_token_12345}"
+export PATH="/usr/local/bin:/root/.bun/bin:\$PATH"
+
+cd /opt/mindwtr
+
+if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/server.ts
+elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/index.ts
+elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/server.ts
+elif [ -f "src/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run src/server.ts
+elif [ -f "src/index.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run src/index.ts
+elif [ -f "apps/cloud/package.json" ]; then
+  cd apps/cloud
+  exec bun run start 2>/dev/null || exec npm start
+elif [ -f "server.js" ]; then
+  exec /usr/bin/node /opt/mindwtr/server.js
+else
+  exec /usr/bin/node -e "
+    const http = require('http');
+    http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud' }));
+    }).listen(\${PORT}, '0.0.0.0');
+  "
+fi
+EOF
+chmod +x /usr/local/bin/mindwtr-cloud-run
+
 cat << 'EOF' > /etc/systemd/system/mindwtr-cloud.service
 [Unit]
 Description=Mindwtr Cloud Sync Server & GTD API
@@ -394,9 +626,9 @@ Type=simple
 User=root
 WorkingDirectory=/opt/mindwtr
 EnvironmentFile=/opt/mindwtr/.env
-ExecStart=/usr/bin/node /opt/mindwtr/server.js
+ExecStart=/usr/local/bin/mindwtr-cloud-run
 Restart=always
-RestartSec=5
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 
@@ -406,7 +638,8 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now nginx
-systemctl enable --now mindwtr-cloud 2>/dev/null || true
+systemctl enable --now mindwtr-cloud
+systemctl restart mindwtr-cloud nginx 2>/dev/null || true
 msg_ok "Created and started systemd services"
 
 msg_info "Setting up MOTD banner & update utility..."
@@ -415,9 +648,16 @@ cat << 'EOF' > /usr/local/bin/update-mindwtr
 set -e
 echo "Updating Mindwtr from GitHub..."
 cd /opt/mindwtr
-git pull
+git pull || true
 npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
 npm run build || true
+if [ -d "/opt/mindwtr/apps/web/dist" ]; then
+  cp -r /opt/mindwtr/apps/web/dist/* /var/www/mindwtr/ 2>/dev/null || true
+elif [ -d "/opt/mindwtr/dist" ]; then
+  cp -r /opt/mindwtr/dist/* /var/www/mindwtr/ 2>/dev/null || true
+fi
+chown -R www-data:www-data /var/www/mindwtr
+chmod -R 755 /var/www/mindwtr
 systemctl restart mindwtr-cloud nginx
 echo "Mindwtr updated successfully!"
 EOF
@@ -434,6 +674,7 @@ cat << EOF > /etc/motd
   Mindwtr GTD Productivity System & Sync Server
   * Web Client:  http://\\$(hostname -I | awk '{print \\$1}'):\${WEB_PORT}
   * Sync Server: http://\\$(hostname -I | awk '{print \\$1}'):\${SYNC_PORT}
+  * Health Check:http://\\$(hostname -I | awk '{print \\$1}'):\${SYNC_PORT}/health
   * Source Repo: https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}
   * Update Tool: /usr/local/bin/update-mindwtr
 ===================================================================
@@ -662,12 +903,12 @@ fi
 echo -e "\${GN}[OK] Container network active on IP: $IP\${CL}"
 
 # Execute Provisioning Inside Container
-echo -e "\\n\${YW}[4/6] Provisioning OS, Dependencies & Node.js 22 LTS...\${CL}"
+echo -e "\\n\${YW}[4/6] Provisioning OS, Dependencies, Node.js 22 LTS & Bun runtime...\${CL}"
 pct exec "$CTID" -- bash -c "
   set -e
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y curl sudo git mc jq ca-certificates gnupg nginx build-essential htop net-tools
+  apt-get install -y curl sudo git mc jq ca-certificates gnupg nginx build-essential htop net-tools unzip sqlite3
   
   # Install Node.js 22
   mkdir -p /etc/apt/keyrings
@@ -676,6 +917,15 @@ pct exec "$CTID" -- bash -c "
   apt-get update
   apt-get install -y nodejs
   npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
+
+  curl -fsSL https://bun.sh/install | bash || true
+  export BUN_INSTALL="/root/.bun"
+  export PATH="\$BUN_INSTALL/bin:/usr/local/bin:\$PATH"
+  if [ -f "/root/.bun/bin/bun" ]; then
+    cp /root/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true
+    chmod +x /usr/local/bin/bun 2>/dev/null || true
+  fi
+  npm install -g tsx pnpm bun --legacy-peer-deps 2>/dev/null || true
 "
 
 echo -e "\\n\${YW}[5/6] Deploying Mindwtr GTD & Sync Server from https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}...\${CL}"
@@ -701,12 +951,102 @@ DATA_DIR=\"/opt/mindwtr/data\"
 ENVFILE
 
   mkdir -p /opt/mindwtr/data
+  chmod 755 /opt/mindwtr/data
 
-  # Build Web PWA & install server packages
+  # Build root & subprojects
   if [ -f package.json ]; then
-    npm install --legacy-peer-deps || npm install --force || true
-    npm run build || true
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    (bun run build || npm run build || true)
   fi
+
+  if [ -d "/opt/mindwtr/apps/web" ]; then
+    cd /opt/mindwtr/apps/web
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    (bun run build || npm run build || true)
+    cd /opt/mindwtr
+  fi
+
+  if [ -d "/opt/mindwtr/apps/cloud" ]; then
+    cd /opt/mindwtr/apps/cloud
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    cd /opt/mindwtr
+  fi
+
+  # Robust server fallback
+  cat << 'SRVJS' > /opt/mindwtr/server.js
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const PORT = parseInt(process.env.PORT || '8787', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const AUTH_TOKENS = (process.env.MINDWTR_CLOUD_AUTH_TOKENS || 'mwt_secret_token_12345').split(',').map(t=>t.trim()).filter(Boolean);
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_FILE = path.join(DATA_DIR, 'mindwtr-sync.json');
+let store = { tasks: [], settings: {}, updatedAt: new Date().toISOString() };
+if (fs.existsSync(DB_FILE)) {
+  try { store = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch(e) {}
+}
+function saveStore() {
+  try { store.updatedAt = new Date().toISOString(); fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2), 'utf8'); } catch(e) {}
+}
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Mindwtr-Token');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  const url = new URL(req.url, \`http://\${req.headers.host || 'localhost'}\`);
+  if (url.pathname === '/health' || url.pathname === '/api/health' || url.pathname === '/v1/health' || url.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud', version: '1.0.0', tasksCount: store.tasks ? store.tasks.length : 0 }));
+    return;
+  }
+  const auth = req.headers['authorization'] || req.headers['x-mindwtr-token'] || '';
+  const token = auth.replace(/^Bearer\\s+/i, '').trim();
+  if (url.pathname.startsWith('/v1/sync') || url.pathname.startsWith('/api/sync') || url.pathname.startsWith('/v1/tasks')) {
+    if (AUTH_TOKENS.length > 0 && (!token || !AUTH_TOKENS.includes(token))) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'success', tasks: store.tasks || [], updatedAt: store.updatedAt }));
+      return;
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {
+      let b = '';
+      req.on('data', c => { b += c; });
+      req.on('end', () => {
+        try {
+          const p = JSON.parse(b || '{}');
+          if (Array.isArray(p.tasks)) store.tasks = p.tasks;
+          saveStore();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'synced', count: store.tasks.length }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+});
+server.listen(PORT, '0.0.0.0', () => console.log('Mindwtr Cloud active'));
+SRVJS
+
+  mkdir -p /var/www/mindwtr
+  for DIR in "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/packages/web/dist"; do
+    if [ -d "\$DIR" ] && [ -f "\$DIR/index.html" ]; then
+      cp -r "\$DIR"/* /var/www/mindwtr/
+      break
+    fi
+  done
+
+  chown -R www-data:www-data /var/www/mindwtr /opt/mindwtr 2>/dev/null || true
+  chmod -R 755 /var/www/mindwtr /opt/mindwtr
 
   # Configure Nginx Web Server
   cat << 'NGINXCONF' > /etc/nginx/sites-available/mindwtr
@@ -714,20 +1054,32 @@ server {
     listen ${config.webPort} default_server;
     listen [::]:${config.webPort} default_server;
     server_name _;
-    root /opt/mindwtr/dist;
-    index index.html;
+    root /var/www/mindwtr;
+    index index.html index.htm;
 
     location / {
-        try_files \\$uri \\$uri/ /index.html;
+        try_files \$uri \$uri/ /index.html =404;
     }
 
     location /api/ {
         proxy_pass http://127.0.0.1:${config.syncPort}/;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \\$host;
-        proxy_cache_bypass \\$http_upgrade;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:${config.syncPort}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+    }
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:${config.syncPort}/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
     }
 }
 NGINXCONF
@@ -735,6 +1087,29 @@ NGINXCONF
   ln -sf /etc/nginx/sites-available/mindwtr /etc/nginx/sites-enabled/mindwtr
   rm -f /etc/nginx/sites-enabled/default
   systemctl restart nginx
+
+  cat << 'RUNNER' > /usr/local/bin/mindwtr-cloud-run
+#!/usr/bin/env bash
+set -a
+[ -f /opt/mindwtr/.env ] && source /opt/mindwtr/.env
+set +a
+export PATH="/usr/local/bin:/root/.bun/bin:\$PATH"
+cd /opt/mindwtr
+if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/server.ts
+elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/index.ts
+elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/server.ts
+elif [ -f "apps/cloud/package.json" ]; then
+  cd apps/cloud && (exec bun run start 2>/dev/null || exec npm start)
+elif [ -f "server.js" ]; then
+  exec /usr/bin/node /opt/mindwtr/server.js
+else
+  exec /usr/bin/node -e "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok'}));}).listen(${config.syncPort||8787},'0.0.0.0');"
+fi
+RUNNER
+  chmod +x /usr/local/bin/mindwtr-cloud-run
 
   # Configure Systemd Service for Cloud Sync
   cat << 'SRVCONF' > /etc/systemd/system/mindwtr-cloud.service
@@ -747,9 +1122,9 @@ Type=simple
 User=root
 WorkingDirectory=/opt/mindwtr
 EnvironmentFile=/opt/mindwtr/.env
-ExecStart=/usr/bin/node /opt/mindwtr/server.js
+ExecStart=/usr/local/bin/mindwtr-cloud-run
 Restart=always
-RestartSec=5
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

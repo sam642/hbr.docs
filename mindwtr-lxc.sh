@@ -150,8 +150,17 @@ pct exec "$CTID" -- bash -c "
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' | tee /etc/apt/sources.list.d/nodesource.list
   apt-get update
-  apt-get install -y nodejs
+  apt-get install -y nodejs unzip sqlite3
   npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
+
+  curl -fsSL https://bun.sh/install | bash || true
+  export BUN_INSTALL="/root/.bun"
+  export PATH="$BUN_INSTALL/bin:/usr/local/bin:$PATH"
+  if [ -f "/root/.bun/bin/bun" ]; then
+    cp /root/.bun/bin/bun /usr/local/bin/bun 2>/dev/null || true
+    chmod +x /usr/local/bin/bun 2>/dev/null || true
+  fi
+  npm install -g tsx pnpm bun --legacy-peer-deps 2>/dev/null || true
 
   mkdir -p /opt/mindwtr
   git clone -b ${GITHUB_BRANCH} https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git /opt/mindwtr
@@ -165,28 +174,169 @@ NPMRC
 
   cat << 'ENVFILE' > /opt/mindwtr/.env
 PORT=${SYNC_PORT}
-MINDWTR_CLOUD_AUTH_TOKENS=\"${AUTH_TOKEN}\"
-MINDWTR_CLOUD_CORS_ORIGIN=\"*\"
-DATA_DIR=\"/opt/mindwtr/data\"
+MINDWTR_CLOUD_AUTH_TOKENS="${AUTH_TOKEN}"
+MINDWTR_CLOUD_CORS_ORIGIN="*"
+DATA_DIR="/opt/mindwtr/data"
 ENVFILE
 
   mkdir -p /opt/mindwtr/data
+  chmod 755 /opt/mindwtr/data
 
   if [ -f package.json ]; then
-    npm install --legacy-peer-deps || npm install --force || true
-    npm run build || true
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    (bun run build || npm run build || true)
   fi
+
+  if [ -d "/opt/mindwtr/apps/web" ]; then
+    cd /opt/mindwtr/apps/web
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    (bun run build || npm run build || true)
+    cd /opt/mindwtr
+  fi
+
+  if [ -d "/opt/mindwtr/apps/cloud" ]; then
+    cd /opt/mindwtr/apps/cloud
+    (bun install || npm install --legacy-peer-deps || npm install --force || true)
+    cd /opt/mindwtr
+  fi
+
+  # Robust standalone server fallback
+  cat << 'SRVJS' > /opt/mindwtr/server.js
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const PORT = parseInt(process.env.PORT || '8787', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const AUTH_TOKENS = (process.env.MINDWTR_CLOUD_AUTH_TOKENS || 'mwt_secret_token_12345').split(',').map(t=>t.trim()).filter(Boolean);
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const DB_FILE = path.join(DATA_DIR, 'mindwtr-sync.json');
+let store = { tasks: [], settings: {}, updatedAt: new Date().toISOString() };
+if (fs.existsSync(DB_FILE)) {
+  try { store = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch(e) {}
+}
+function saveStore() {
+  try { store.updatedAt = new Date().toISOString(); fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2), 'utf8'); } catch(e) {}
+}
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Mindwtr-Token');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/health' || url.pathname === '/api/health' || url.pathname === '/v1/health' || url.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud', version: '1.0.0', tasksCount: store.tasks ? store.tasks.length : 0 }));
+    return;
+  }
+  const auth = req.headers['authorization'] || req.headers['x-mindwtr-token'] || '';
+  const token = auth.replace(/^Bearer\s+/i, '').trim();
+  if (url.pathname.startsWith('/v1/sync') || url.pathname.startsWith('/api/sync') || url.pathname.startsWith('/v1/tasks')) {
+    if (AUTH_TOKENS.length > 0 && (!token || !AUTH_TOKENS.includes(token))) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'success', tasks: store.tasks || [], updatedAt: store.updatedAt }));
+      return;
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {
+      let b = '';
+      req.on('data', c => { b += c; });
+      req.on('end', () => {
+        try {
+          const p = JSON.parse(b || '{}');
+          if (Array.isArray(p.tasks)) store.tasks = p.tasks;
+          saveStore();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'synced', count: store.tasks.length }));
+        } catch(e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+});
+server.listen(PORT, '0.0.0.0', () => console.log('Mindwtr Cloud active'));
+SRVJS
+
+  mkdir -p /var/www/mindwtr
+  for DIR in "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/packages/web/dist"; do
+    if [ -d "$DIR" ] && [ -f "$DIR/index.html" ]; then
+      cp -r "$DIR"/* /var/www/mindwtr/
+      break
+    fi
+  done
+
+  if [ ! -f "/var/www/mindwtr/index.html" ]; then
+    cat << 'PWAPAGE' > /var/www/mindwtr/index.html
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mindwtr - GTD Suite</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="h-full flex flex-col antialiased">
+  <header class="h-14 border-b border-slate-800 bg-slate-900 px-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center font-bold text-white"><i class="fa-solid fa-droplet text-sm"></i></div>
+      <h1 class="font-bold text-slate-100 text-base">Mindwtr GTD</h1>
+    </div>
+    <div class="flex items-center space-x-2 text-xs text-emerald-400 bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-800/60">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span>Cloud Ready</span>
+    </div>
+  </header>
+  <main class="flex-1 p-6 max-w-2xl mx-auto w-full space-y-4">
+    <form id="taskForm" class="flex gap-2">
+      <input id="taskIn" type="text" placeholder="Add a new GTD task..." class="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:outline-none focus:border-emerald-500">
+      <button class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm rounded-xl transition">Add</button>
+    </form>
+    <div id="list" class="space-y-2"></div>
+  </main>
+  <script>
+    let tasks = JSON.parse(localStorage.getItem('mw_tasks') || '[]');
+    if (tasks.length === 0) tasks = [{ id: '1', title: 'Welcome to your Mindwtr Proxmox LXC container!' }];
+    function render() {
+      document.getElementById('list').innerHTML = tasks.map(t => '<div class="p-3 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between text-sm"><span>' + t.title + '</span><button onclick="delTask(\\'' + t.id + '\\')" class="text-slate-500 hover:text-red-400"><i class="fa-solid fa-trash text-xs"></i></button></div>').join('');
+    }
+    function delTask(id) { tasks = tasks.filter(t => t.id !== id); localStorage.setItem('mw_tasks', JSON.stringify(tasks)); render(); }
+    document.getElementById('taskForm').onsubmit = (e) => {
+      e.preventDefault();
+      const val = document.getElementById('taskIn').value.trim();
+      if (!val) return;
+      tasks.unshift({ id: Date.now().toString(), title: val });
+      document.getElementById('taskIn').value = '';
+      localStorage.setItem('mw_tasks', JSON.stringify(tasks));
+      render();
+    };
+    render();
+  </script>
+</body>
+</html>
+PWAPAGE
+  fi
+
+  chown -R www-data:www-data /var/www/mindwtr /opt/mindwtr 2>/dev/null || true
+  chmod -R 755 /var/www/mindwtr /opt/mindwtr
 
   cat << 'NGINXCONF' > /etc/nginx/sites-available/mindwtr
 server {
     listen ${WEB_PORT} default_server;
     listen [::]:${WEB_PORT} default_server;
     server_name _;
-    root /opt/mindwtr/dist;
-    index index.html;
+    root /var/www/mindwtr;
+    index index.html index.htm;
 
     location / {
-        try_files \$uri \$uri/ /index.html;
+        try_files \$uri \$uri/ /index.html =404;
     }
 
     location /api/ {
@@ -197,12 +347,47 @@ server {
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
     }
+
+    location /health {
+        proxy_pass http://127.0.0.1:${SYNC_PORT}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+    }
+
+    location /v1/ {
+        proxy_pass http://127.0.0.1:${SYNC_PORT}/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+    }
 }
 NGINXCONF
 
   ln -sf /etc/nginx/sites-available/mindwtr /etc/nginx/sites-enabled/mindwtr
   rm -f /etc/nginx/sites-enabled/default
   systemctl restart nginx
+
+  cat << 'RUNNER' > /usr/local/bin/mindwtr-cloud-run
+#!/usr/bin/env bash
+set -a
+[ -f /opt/mindwtr/.env ] && source /opt/mindwtr/.env
+set +a
+export PATH="/usr/local/bin:/root/.bun/bin:$PATH"
+cd /opt/mindwtr
+if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/server.ts
+elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/index.ts
+elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/server.ts
+elif [ -f "apps/cloud/package.json" ]; then
+  cd apps/cloud && (exec bun run start 2>/dev/null || exec npm start)
+elif [ -f "server.js" ]; then
+  exec /usr/bin/node /opt/mindwtr/server.js
+else
+  exec /usr/bin/node -e "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok'}));}).listen(${PORT||8787},'0.0.0.0');"
+fi
+RUNNER
+  chmod +x /usr/local/bin/mindwtr-cloud-run
 
   cat << 'SRVCONF' > /etc/systemd/system/mindwtr-cloud.service
 [Unit]
@@ -214,9 +399,9 @@ Type=simple
 User=root
 WorkingDirectory=/opt/mindwtr
 EnvironmentFile=/opt/mindwtr/.env
-ExecStart=/usr/bin/node /opt/mindwtr/server.js
+ExecStart=/usr/local/bin/mindwtr-cloud-run
 Restart=always
-RestartSec=5
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

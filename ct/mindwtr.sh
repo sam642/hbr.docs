@@ -65,6 +65,13 @@ function update_script() {
       npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
       npm run build || true
     fi
+    if [ -d \"/opt/mindwtr/apps/web/dist\" ]; then
+      cp -r /opt/mindwtr/apps/web/dist/* /var/www/mindwtr/ 2>/dev/null || true
+    elif [ -d \"/opt/mindwtr/dist\" ]; then
+      cp -r /opt/mindwtr/dist/* /var/www/mindwtr/ 2>/dev/null || true
+    fi
+    chown -R www-data:www-data /var/www/mindwtr 2>/dev/null || true
+    chmod -R 755 /var/www/mindwtr
     systemctl restart mindwtr-cloud nginx
   "
   msg_ok "Updated ${APP} Successfully"
