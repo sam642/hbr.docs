@@ -61,17 +61,51 @@ function update_script() {
     systemctl stop mindwtr-cloud nginx 2>/dev/null || true
     cd /opt/mindwtr
     git pull origin "${GITHUB_BRANCH:-main}"
+    
+    export PATH="/usr/local/bin:/root/.bun/bin:$PATH"
+    
     if [ -f package.json ]; then
-      npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
-      npm run build || true
+      (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+      (bun run build:web || bun run build:desktop || bun run build || npm run build || true)
     fi
-    if [ -d "/opt/mindwtr/apps/web/dist" ]; then
-      cp -r /opt/mindwtr/apps/web/dist/* /var/www/mindwtr/ 2>/dev/null || true
-    elif [ -d "/opt/mindwtr/dist" ]; then
-      cp -r /opt/mindwtr/dist/* /var/www/mindwtr/ 2>/dev/null || true
+
+    if [ -d "/opt/mindwtr/apps/desktop" ]; then
+      cd /opt/mindwtr/apps/desktop
+      (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+      (bun run build || npm run build || true)
+      cd /opt/mindwtr
     fi
-    chown -R www-data:www-data /var/www/mindwtr 2>/dev/null || true
-    chmod -R 755 /var/www/mindwtr
+
+    if [ -d "/opt/mindwtr/apps/web" ]; then
+      cd /opt/mindwtr/apps/web
+      (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+      (bun run build || npm run build || true)
+      cd /opt/mindwtr
+    fi
+
+    if [ -d "/opt/mindwtr/packages/web" ]; then
+      cd /opt/mindwtr/packages/web
+      (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+      (bun run build || npm run build || true)
+      cd /opt/mindwtr
+    fi
+
+    if [ -d "/opt/mindwtr/apps/cloud" ]; then
+      cd /opt/mindwtr/apps/cloud
+      (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+      (bun run build || npm run build || true)
+      cd /opt/mindwtr
+    fi
+
+    for DIR in "/opt/mindwtr/apps/desktop/dist" "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/packages/web/dist" "/opt/mindwtr/apps/desktop/build" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/web/dist" "/opt/mindwtr/build"; do
+      if [ -d "$DIR" ] && [ -f "$DIR/index.html" ]; then
+        cp -r "$DIR"/* /var/www/mindwtr/ 2>/dev/null || true
+        break
+      fi
+    done
+
+    chown -R www-data:www-data /var/www /var/www/mindwtr /opt/mindwtr 2>/dev/null || true
+    chmod -R 755 /var/www /var/www/mindwtr /opt/mindwtr
     systemctl restart mindwtr-cloud nginx
 EOF_UPDATE
   msg_ok "Updated ${APP} Successfully"

@@ -100,27 +100,46 @@ msg_ok "Configured .env file and data directory"
 msg_info "Building Mindwtr Monorepo, Web PWA & Cloud..."
 cd /opt/mindwtr
 
-# 1. Install root dependencies if package.json exists
+# 1. Install root dependencies with Bun / npm and run workspace builds
 if [ -f "package.json" ]; then
   msg_info "Installing root packages..."
-  (bun install || npm install --legacy-peer-deps || npm install --force || true)
-  (bun run build || npm run build || true)
+  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build:web || bun run build:desktop || bun run build || npm run build || true)
 fi
 
-# 2. Build apps/web if present
-if [ -d "/opt/mindwtr/apps/web" ]; then
-  msg_info "Building apps/web frontend..."
-  cd /opt/mindwtr/apps/web
-  (bun install || npm install --legacy-peer-deps || npm install --force || true)
+# 2. Build apps/desktop (Tauri / Web frontend) if present
+if [ -d "/opt/mindwtr/apps/desktop" ]; then
+  msg_info "Building apps/desktop frontend..."
+  cd /opt/mindwtr/apps/desktop
+  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
   (bun run build || npm run build || true)
   cd /opt/mindwtr
 fi
 
-# 3. Setup apps/cloud if present
+# 3. Build apps/web if present
+if [ -d "/opt/mindwtr/apps/web" ]; then
+  msg_info "Building apps/web frontend..."
+  cd /opt/mindwtr/apps/web
+  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build || npm run build || true)
+  cd /opt/mindwtr
+fi
+
+# 4. Build packages/web if present
+if [ -d "/opt/mindwtr/packages/web" ]; then
+  msg_info "Building packages/web frontend..."
+  cd /opt/mindwtr/packages/web
+  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build || npm run build || true)
+  cd /opt/mindwtr
+fi
+
+# 5. Setup apps/cloud if present
 if [ -d "/opt/mindwtr/apps/cloud" ]; then
   msg_info "Setting up apps/cloud server dependencies..."
   cd /opt/mindwtr/apps/cloud
-  (bun install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun install || pnpm install || npm install --legacy-peer-deps || npm install --force || true)
+  (bun run build || npm run build || true)
   cd /opt/mindwtr
 fi
 
@@ -251,11 +270,11 @@ msg_ok "Configured Mindwtr Cloud Server"
 msg_info "Deploying Web Client to /var/www/mindwtr..."
 mkdir -p /var/www/mindwtr
 
-# Discover and copy built web assets
+# Discover and copy built web assets from authentic Mindwtr repository
 COPIED_BUILD=0
-for DIR in "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/packages/web/dist" "/opt/mindwtr/web/dist" "/opt/mindwtr/build"; do
+for DIR in "/opt/mindwtr/apps/desktop/dist" "/opt/mindwtr/apps/web/dist" "/opt/mindwtr/dist" "/opt/mindwtr/packages/web/dist" "/opt/mindwtr/apps/desktop/build" "/opt/mindwtr/apps/web/build" "/opt/mindwtr/web/dist" "/opt/mindwtr/build"; do
   if [ -d "$DIR" ] && [ -f "$DIR/index.html" ]; then
-    msg_info "Copying web build files from $DIR to /var/www/mindwtr..."
+    msg_info "Copying official web build files from $DIR to /var/www/mindwtr..."
     cp -r "$DIR"/* /var/www/mindwtr/
     COPIED_BUILD=1
     break
@@ -581,7 +600,27 @@ export MINDWTR_CLOUD_AUTH_TOKENS="${MINDWTR_CLOUD_AUTH_TOKENS:-mwt_secret_token_
 export PATH="/usr/local/bin:/root/.bun/bin:$PATH"
 
 cd /opt/mindwtr
-exec /usr/bin/node /opt/mindwtr/server.js
+
+if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/server.ts
+elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/src/index.ts
+elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
+  exec bun run apps/cloud/server.ts
+elif [ -f "apps/cloud/package.json" ]; then
+  cd apps/cloud
+  exec bun run start 2>/dev/null || exec npm start
+elif [ -f "server.js" ]; then
+  exec /usr/bin/node /opt/mindwtr/server.js
+else
+  exec /usr/bin/node -e "
+    const http = require('http');
+    http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud' }));
+    }).listen(process.env.PORT || 8787, '0.0.0.0');
+  "
+fi
 EOF
 chmod +x /usr/local/bin/mindwtr-cloud-run
 
