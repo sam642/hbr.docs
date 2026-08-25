@@ -130,6 +130,8 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
       action: () => {
         addLog('info', `[5/6] Cloning https://github.com/${user}/${repo}.git into /opt/mindwtr...`);
         addLog('ok', `Cloned Mindwtr repository (branch: ${branch})`);
+        addLog('info', `Installing node packages (resolving React / React Native peer dependencies)...`);
+        addLog('ok', `Configured .npmrc (legacy-peer-deps=true) & installed dependencies`);
         addLog('info', `Configuring Mindwtr Cloud Sync server on port ${config.syncPort}...`);
         addLog('ok', `Generated auth tokens and created /opt/mindwtr/.env`);
       },

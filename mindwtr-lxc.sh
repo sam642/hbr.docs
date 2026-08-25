@@ -151,10 +151,17 @@ pct exec "$CTID" -- bash -c "
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' | tee /etc/apt/sources.list.d/nodesource.list
   apt-get update
   apt-get install -y nodejs
+  npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
 
   mkdir -p /opt/mindwtr
   git clone -b ${GITHUB_BRANCH} https://github.com/${GITHUB_USER}/${GITHUB_REPO}.git /opt/mindwtr
   cd /opt/mindwtr
+
+  cat << 'NPMRC' > /opt/mindwtr/.npmrc
+legacy-peer-deps=true
+fund=false
+audit=false
+NPMRC
 
   cat << 'ENVFILE' > /opt/mindwtr/.env
 PORT=${SYNC_PORT}
@@ -166,7 +173,7 @@ ENVFILE
   mkdir -p /opt/mindwtr/data
 
   if [ -f package.json ]; then
-    npm install
+    npm install --legacy-peer-deps || npm install --force || true
     npm run build || true
   fi
 

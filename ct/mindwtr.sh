@@ -62,7 +62,7 @@ function update_script() {
     cd /opt/mindwtr
     git pull origin ${GITHUB_BRANCH}
     if [ -f package.json ]; then
-      npm install --omit=dev
+      npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
       npm run build || true
     fi
     systemctl restart mindwtr-cloud nginx

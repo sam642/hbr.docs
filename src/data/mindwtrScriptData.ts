@@ -90,7 +90,7 @@ function update_script() {
     cd /opt/mindwtr
     git pull origin \${GITHUB_BRANCH}
     if [ -f package.json ]; then
-      npm install --omit=dev
+      npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
       npm run build || true
     fi
     systemctl restart mindwtr-cloud nginx
@@ -314,13 +314,22 @@ curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dea
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
 apt-get update
 apt-get install -y nodejs
-msg_ok "Configured Node.js \$(node -v) and npm \$(npm -v)"
+npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
+msg_ok "Configured Node.js \$(node -v) and npm \$(npm -v) (legacy-peer-deps enabled)"
 
 msg_info "Cloning Mindwtr from https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}..."
 mkdir -p /opt/mindwtr
 rm -rf /opt/mindwtr/* /opt/mindwtr/.* 2>/dev/null || true
 git clone -b "\${GITHUB_BRANCH}" "https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}.git" /opt/mindwtr
 cd /opt/mindwtr
+
+# Configure repository .npmrc to prevent peer dependency resolution conflicts (e.g. React 19 / React Native)
+cat << 'EOF' > /opt/mindwtr/.npmrc
+legacy-peer-deps=true
+fund=false
+audit=false
+EOF
+
 msg_ok "Cloned Mindwtr repository"
 
 msg_info "Configuring Mindwtr Cloud Environment..."
@@ -338,7 +347,8 @@ msg_ok "Configured .env file and data directory"
 msg_info "Building Mindwtr Cloud & Web PWA Client..."
 cd /opt/mindwtr
 if [ -f "package.json" ]; then
-  npm install
+  msg_info "Installing dependencies with peer-dependency compatibility mode..."
+  npm install --legacy-peer-deps || npm install --force || true
   npm run build || true
 fi
 msg_ok "Built Mindwtr application"
@@ -406,7 +416,7 @@ set -e
 echo "Updating Mindwtr from GitHub..."
 cd /opt/mindwtr
 git pull
-npm install --omit=dev
+npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps || npm install --force || true
 npm run build || true
 systemctl restart mindwtr-cloud nginx
 echo "Mindwtr updated successfully!"
@@ -665,6 +675,7 @@ pct exec "$CTID" -- bash -c "
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' | tee /etc/apt/sources.list.d/nodesource.list
   apt-get update
   apt-get install -y nodejs
+  npm config set legacy-peer-deps true --location=global 2>/dev/null || npm config set legacy-peer-deps true || true
 "
 
 echo -e "\\n\${YW}[5/6] Deploying Mindwtr GTD & Sync Server from https://github.com/\${GITHUB_USER}/\${GITHUB_REPO}...\${CL}"
@@ -673,6 +684,13 @@ pct exec "$CTID" -- bash -c "
   mkdir -p /opt/mindwtr
   git clone -b ${branch} https://github.com/${user}/${repo}.git /opt/mindwtr
   cd /opt/mindwtr
+
+  # Configure .npmrc to avoid peer dependency conflicts
+  cat << 'NPMRC' > /opt/mindwtr/.npmrc
+legacy-peer-deps=true
+fund=false
+audit=false
+NPMRC
 
   # Create Cloud Environment
   cat << 'ENVFILE' > /opt/mindwtr/.env
@@ -686,7 +704,7 @@ ENVFILE
 
   # Build Web PWA & install server packages
   if [ -f package.json ]; then
-    npm install
+    npm install --legacy-peer-deps || npm install --force || true
     npm run build || true
   fi
 
