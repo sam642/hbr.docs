@@ -16,8 +16,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 }) => {
   const [copiedCmd, setCopiedCmd] = useState(false);
 
-  const command = `bash -c "$(wget -qLO - https://github.com/community-scripts/ProxmoxVE/raw/main/ct/mindwtr.sh)"`;
-  const standaloneCmd = `bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/mindwtr.sh || echo 'Run Standalone Script from Viewer')"` ;
+  const user = config.githubUser || 'dongdongbh';
+  const repo = config.githubRepo || 'Mindwtr';
+  const branch = config.branch || 'main';
+
+  const command = `bash -c "$(wget -qLO - https://raw.githubusercontent.com/${user}/${repo}/${branch}/ct/mindwtr.sh)"`;
+  const curlCommand = `bash -c "$(curl -fsSL https://raw.githubusercontent.com/${user}/${repo}/${branch}/install.sh)"`;
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -71,9 +75,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5 text-orange-400" />
-                  Run in Proxmox VE Shell:
+                  Run directly from your GitHub Repo:
                 </span>
-                <span className="text-emerald-400 font-mono text-[11px]">Unprivileged LXC • Debian 12</span>
+                <span className="text-cyan-400 font-mono text-[11px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                  {user}/{repo} ({branch})
+                </span>
               </div>
               <div className="relative group">
                 <div className="bg-slate-950 border border-slate-700/80 rounded-xl p-3.5 font-mono text-xs sm:text-sm text-cyan-300 overflow-x-auto shadow-xl pr-28 flex items-center select-all">

@@ -35,6 +35,9 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
   const token = config.authToken || 'mwt_live_89419481948';
+  const user = config.githubUser || 'dongdongbh';
+  const repo = config.githubRepo || 'Mindwtr';
+  const branch = config.branch || 'main';
 
   const addLog = (type: LogLine['type'], text: string) => {
     const time = new Date().toLocaleTimeString();
@@ -48,7 +51,7 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
   const simulationSteps = [
     {
       action: () => {
-        addLog('cmd', `root@pve:~# bash -c "$(wget -qLO - https://github.com/community-scripts/ProxmoxVE/raw/main/ct/mindwtr.sh)"`);
+        addLog('cmd', `root@pve:~# bash -c "$(wget -qLO - https://raw.githubusercontent.com/${user}/${repo}/${branch}/ct/mindwtr.sh)"`);
         addLog('raw', `
 ===================================================================
    __  __ _           _          _       
@@ -57,8 +60,8 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
   | |  | | | | | | (_| |\\ V  V /| |_| |   
   |_|  |_|_|_| |_|\\__,_| \\_/\\_/  \\__|_|   
 ===================================================================
-   Proxmox VE Helper-Scripts (community-scripts.org)
-   Mindwtr LXC Container Deployment
+   Mindwtr LXC Helper-Script (Host Builder)
+   Source: https://github.com/${user}/${repo} (${branch})
 ===================================================================`);
         setShowWhiptailPrompt(true);
       },
@@ -125,8 +128,8 @@ export const TerminalSimulator: React.FC<TerminalSimulatorProps> = ({ config }) 
     },
     {
       action: () => {
-        addLog('info', `[5/6] Cloning https://github.com/dongdongbh/Mindwtr.git into /opt/mindwtr...`);
-        addLog('ok', `Cloned Mindwtr repository (branch: main)`);
+        addLog('info', `[5/6] Cloning https://github.com/${user}/${repo}.git into /opt/mindwtr...`);
+        addLog('ok', `Cloned Mindwtr repository (branch: ${branch})`);
         addLog('info', `Configuring Mindwtr Cloud Sync server on port ${config.syncPort}...`);
         addLog('ok', `Generated auth tokens and created /opt/mindwtr/.env`);
       },

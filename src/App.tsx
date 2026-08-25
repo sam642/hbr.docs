@@ -12,6 +12,9 @@ import { MINDWTR_METADATA } from './data/mindwtrScriptData';
 import { Sliders, Code, Terminal, Sparkles, BookOpen, Layers, CheckCircle2 } from 'lucide-react';
 
 const DEFAULT_CONFIG: ScriptConfig = {
+  githubUser: 'dongdongbh',
+  githubRepo: 'Mindwtr',
+  branch: 'main',
   ctId: 105,
   hostname: 'mindwtr',
   cores: 2,
@@ -45,7 +48,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-orange-500 selection:text-white">
       {/* Top Navbar */}
-      <Header activeTab={activeTab} setActiveTab={(tab) => setActiveTab(tab as any)} />
+      <Header activeTab={activeTab} setActiveTab={(tab) => setActiveTab(tab as any)} config={config} />
 
       {/* Hero Banner with Proxmox Command */}
       <HeroBanner

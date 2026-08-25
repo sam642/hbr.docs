@@ -1,6 +1,9 @@
 export type ScriptTab = 'ct-script' | 'install-script' | 'metadata-json' | 'standalone-script' | 'docker-compose';
 
 export interface ScriptConfig {
+  githubUser: string;
+  githubRepo: string;
+  branch: string;
   ctId: number;
   hostname: string;
   cores: number;

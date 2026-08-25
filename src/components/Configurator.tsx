@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ScriptConfig } from '../types';
-import { Settings, RefreshCw, Key, Shield, Network, Server, HardDrive, Cpu } from 'lucide-react';
+import { Settings, RefreshCw, Key, Shield, Network, Server, HardDrive, Cpu, Github, Check, Copy, ExternalLink } from 'lucide-react';
 
 interface ConfiguratorProps {
   config: ScriptConfig;
@@ -9,6 +9,8 @@ interface ConfiguratorProps {
 }
 
 export const Configurator: React.FC<ConfiguratorProps> = ({ config, onChange, onReset }) => {
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
   const generateRandomToken = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_';
     let result = 'mwt_';
@@ -17,6 +19,17 @@ export const Configurator: React.FC<ConfiguratorProps> = ({ config, onChange, on
     }
     onChange({ ...config, authToken: result });
   };
+
+  const handleCopy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedUrl(label);
+    setTimeout(() => setCopiedUrl(null), 2000);
+  };
+
+  const user = config.githubUser || 'dongdongbh';
+  const repo = config.githubRepo || 'Mindwtr';
+  const branch = config.branch || 'main';
+  const rawBase = `https://raw.githubusercontent.com/${user}/${repo}/${branch}`;
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-6 shadow-xl">
@@ -33,6 +46,74 @@ export const Configurator: React.FC<ConfiguratorProps> = ({ config, onChange, on
           <RefreshCw className="w-3 h-3" />
           Reset Defaults
         </button>
+      </div>
+
+      {/* GitHub Repository Target Card */}
+      <div className="bg-slate-950/80 border border-cyan-500/30 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase text-cyan-400 tracking-wider">
+            <Github className="w-4 h-4" />
+            GitHub Repository Target (Your Script Host)
+          </div>
+          <span className="text-[11px] text-slate-400">
+            Allows running scripts directly from your own GitHub repository
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs text-slate-300 mb-1">GitHub User / Org</label>
+            <input
+              id="cfg-github-user"
+              type="text"
+              value={config.githubUser}
+              onChange={(e) => onChange({ ...config, githubUser: e.target.value.trim() })}
+              placeholder="e.g. your-github-username"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-cyan-400 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-300 mb-1">Repository Name</label>
+            <input
+              id="cfg-github-repo"
+              type="text"
+              value={config.githubRepo}
+              onChange={(e) => onChange({ ...config, githubRepo: e.target.value.trim() })}
+              placeholder="e.g. Mindwtr"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-cyan-400 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-300 mb-1">Branch</label>
+            <input
+              id="cfg-github-branch"
+              type="text"
+              value={config.branch}
+              onChange={(e) => onChange({ ...config, branch: e.target.value.trim() })}
+              placeholder="main"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-cyan-400 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Direct Raw URLs Preview */}
+        <div className="bg-slate-900/90 rounded-lg p-2.5 border border-slate-800 space-y-2">
+          <div className="text-[11px] font-semibold text-slate-400">Direct GitHub Raw Endpoints for Proxmox:</div>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-slate-950 p-2 rounded border border-slate-800/80">
+            <div className="font-mono text-xs text-cyan-300 truncate">
+              {rawBase}/ct/mindwtr.sh
+            </div>
+            <button
+              onClick={() => handleCopy(`${rawBase}/ct/mindwtr.sh`, 'ct')}
+              className="flex items-center justify-center gap-1 text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition"
+            >
+              {copiedUrl === 'ct' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedUrl === 'ct' ? 'Copied' : 'Copy URL'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -78,7 +159,7 @@ export const Configurator: React.FC<ConfiguratorProps> = ({ config, onChange, on
                     : 'bg-slate-950 text-slate-400 border-slate-800'
                 }`}
               >
-                Unprivileged (Recommended)
+                Unprivileged (Rec.)
               </button>
               <button
                 type="button"

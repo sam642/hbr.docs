@@ -1,0 +1,32 @@
+{
+  "name": "Mindwtr",
+  "slug": "mindwtr",
+  "tagline": "Privacy-First, Local-First GTD Productivity System",
+  "description": "Mindwtr is a privacy-first, local-first Getting Things Done (GTD) productivity system with multi-device sync, Web PWA client, and task automation API.",
+  "categories": [
+    "Productivity",
+    "Task Management",
+    "Self-Hosted"
+  ],
+  "type": "lxc",
+  "os": "debian",
+  "version": "12",
+  "privileged": false,
+  "port": 5173,
+  "sync_port": 8787,
+  "resources": {
+    "cpu": 2,
+    "ram": 2048,
+    "hdd": 8
+  },
+  "website": "https://github.com/dongdongbh/Mindwtr",
+  "documentation": "https://github.com/dongdongbh/Mindwtr#readme",
+  "install_script": "https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/ct/mindwtr.sh",
+  "update_script": "https://raw.githubusercontent.com/dongdongbh/Mindwtr/main/ct/mindwtr.sh",
+  "notes": [
+    "Default Web UI runs on port 5173",
+    "Cloud Sync Server & REST API runs on port 8787",
+    "Configured with auth tokens for multi-device sync security",
+    "Self-contained helper script runnable directly from GitHub repository"
+  ]
+}

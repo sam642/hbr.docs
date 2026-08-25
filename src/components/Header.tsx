@@ -1,12 +1,17 @@
 import React from 'react';
 import { Terminal, Shield, Cpu, Github, ExternalLink, Sparkles, CheckSquare } from 'lucide-react';
+import { ScriptConfig } from '../types';
 
 interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  config?: ScriptConfig;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
+export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, config }) => {
+  const user = config?.githubUser || 'dongdongbh';
+  const repo = config?.githubRepo || 'Mindwtr';
+
   return (
     <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -20,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-100 text-lg tracking-tight">Proxmox Helper Scripts</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium">
-                  community-scripts.org
+                  Self-Hosted Hub
                 </span>
               </div>
               <p className="text-xs text-slate-400">Automated LXC Container Deployment Hub</p>
@@ -85,14 +90,14 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
           {/* Quick links */}
           <div className="flex items-center gap-3">
             <a
-              href="https://github.com/dongdongbh/Mindwtr"
+              href={`https://github.com/${user}/${repo}`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 transition"
-              title="Mindwtr GitHub Repository"
+              title="Your GitHub Repository"
             >
-              <Github className="w-4 h-4" />
-              <span className="hidden sm:inline">dongdongbh/Mindwtr</span>
+              <Github className="w-4 h-4 text-cyan-400" />
+              <span className="hidden sm:inline font-mono">{user}/{repo}</span>
               <ExternalLink className="w-3 h-3 text-slate-400" />
             </a>
           </div>

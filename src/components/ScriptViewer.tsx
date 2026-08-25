@@ -18,6 +18,8 @@ import {
   ExternalLink,
   Info,
   Package,
+  Github,
+  Globe,
 } from 'lucide-react';
 
 interface ScriptViewerProps {
@@ -28,58 +30,84 @@ interface ScriptViewerProps {
 export const ScriptViewer: React.FC<ScriptViewerProps> = ({ config, onOpenDownloadModal }) => {
   const [activeTab, setActiveTab] = useState<ScriptTab>('ct-script');
   const [copied, setCopied] = useState(false);
+  const [copiedRawUrl, setCopiedRawUrl] = useState(false);
 
-  const getActiveContent = (): { content: string; filename: string; language: string; badge: string; desc: string } => {
+  const user = config.githubUser || 'dongdongbh';
+  const repo = config.githubRepo || 'Mindwtr';
+  const branch = config.branch || 'main';
+  const rawBase = `https://raw.githubusercontent.com/${user}/${repo}/${branch}`;
+
+  const getActiveContent = (): {
+    content: string;
+    filename: string;
+    language: string;
+    badge: string;
+    desc: string;
+    rawUrl?: string;
+  } => {
     switch (activeTab) {
       case 'ct-script':
         return {
           content: generateCtScript(config),
           filename: 'ct/mindwtr.sh',
           language: 'bash',
-          badge: 'Host Script (Proxmox Node)',
-          desc: 'Runs on Proxmox VE host shell. Sources build.func, checks storage, presents whiptail menu, creates Debian 12 container, and triggers container installer.',
+          badge: 'Host Script (In Repo)',
+          desc: 'Runs on Proxmox VE host shell. Downloads Debian 12 container and fetches install script directly from your GitHub repo.',
+          rawUrl: `${rawBase}/ct/mindwtr.sh`,
         };
       case 'install-script':
         return {
           content: generateInstallScript(config),
           filename: 'install/mindwtr-install.sh',
           language: 'bash',
-          badge: 'Container Script (Debian 12 LXC)',
-          desc: 'Runs inside the created LXC container. Sources install.func, updates OS, installs Node.js 22 LTS & Nginx, clones Mindwtr, sets up systemd services and MOTD.',
+          badge: 'Container Script (In Repo)',
+          desc: 'Runs inside the created LXC container. Installs Node.js 22 LTS, clones your Mindwtr repo, and configures systemd services & Nginx.',
+          rawUrl: `${rawBase}/install/mindwtr-install.sh`,
         };
       case 'metadata-json':
         return {
           content: generateMetadataJson(config),
           filename: 'json/mindwtr.json',
           language: 'json',
-          badge: 'Community Scripts Catalog',
-          desc: 'Metadata configuration for community-scripts.org website search directory, specifying ports, default hardware specs, logos, and category tags.',
+          badge: 'Metadata Descriptor (In Repo)',
+          desc: 'Directory metadata JSON pointing to your custom repository install script URLs.',
+          rawUrl: `${rawBase}/json/mindwtr.json`,
         };
       case 'standalone-script':
         return {
           content: generateStandaloneScript(config),
-          filename: 'mindwtr-lxc-installer.sh',
+          filename: 'mindwtr-lxc.sh',
           language: 'bash',
-          badge: 'Zero-Dependency Standalone',
-          desc: 'Single self-contained Bash script. Can be pasted directly into any Proxmox shell without relying on external repository branch scripts.',
+          badge: 'Zero-Dependency Standalone (In Repo)',
+          desc: 'Single self-contained Bash script with embedded provisioning routines.',
+          rawUrl: `${rawBase}/mindwtr-lxc.sh`,
         };
       case 'docker-compose':
         return {
           content: generateDockerComposeConfig(config),
           filename: 'docker-compose.yml',
           language: 'yaml',
-          badge: 'Docker Compose Alternate',
-          desc: 'For Docker-in-LXC or standard Docker VM deployment running mindwtr-cloud and mindwtr-app PWA.',
+          badge: 'Docker Compose Spec',
+          desc: 'For Docker-in-LXC or standard Docker VM deployments.',
+          rawUrl: `${rawBase}/docker-compose.yml`,
         };
     }
   };
 
-  const { content, filename, language, badge, desc } = getActiveContent();
+  const { content, filename, language, badge, desc, rawUrl } = getActiveContent();
 
   const handleCopy = () => {
     navigator.clipboard.writeText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCopyRawUrl = () => {
+    if (rawUrl) {
+      navigator.clipboard.writeText(rawUrl);
+      setCopiedRawUrl(true);
+      setTimeout(() => setCopiedRawUrl(false), 2000);
+    }
   };
 
   const handleDownloadFile = () => {
@@ -135,7 +163,7 @@ export const ScriptViewer: React.FC<ScriptViewerProps> = ({ config, onOpenDownlo
             }`}
           >
             <Terminal className="w-3.5 h-3.5" />
-            Standalone Script
+            mindwtr-lxc.sh
           </button>
 
           <button
@@ -167,6 +195,22 @@ export const ScriptViewer: React.FC<ScriptViewerProps> = ({ config, onOpenDownlo
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2">
+          {rawUrl && (
+            <button
+              id="btn-copy-raw-url"
+              onClick={handleCopyRawUrl}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                copiedRawUrl
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700'
+              }`}
+              title="Copy direct GitHub Raw URL"
+            >
+              {copiedRawUrl ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+              {copiedRawUrl ? 'Raw URL Copied' : 'Copy GitHub Raw URL'}
+            </button>
+          )}
+
           <button
             id="btn-copy-code"
             onClick={handleCopy}
@@ -177,7 +221,7 @@ export const ScriptViewer: React.FC<ScriptViewerProps> = ({ config, onOpenDownlo
             }`}
           >
             {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? 'Copied Code' : 'Copy Code'}
           </button>
 
           <button
@@ -201,16 +245,23 @@ export const ScriptViewer: React.FC<ScriptViewerProps> = ({ config, onOpenDownlo
         </div>
       </div>
 
-      {/* File Description Header */}
-      <div className="bg-slate-950/90 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between text-xs">
+      {/* File Description & GitHub Raw Header */}
+      <div className="bg-slate-950/90 px-4 py-2.5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2">
         <div className="flex items-center gap-2 text-slate-300">
           <Info className="w-4 h-4 text-cyan-400 flex-shrink-0" />
           <span className="font-mono font-semibold text-white">{filename}</span>
           <span className="hidden sm:inline text-slate-400">— {desc}</span>
         </div>
-        <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-cyan-400 border border-slate-700 text-[11px] font-medium">
-          {badge}
-        </span>
+        <div className="flex items-center gap-2">
+          {rawUrl && (
+            <span className="text-[11px] font-mono text-cyan-300/80 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800/40 truncate max-w-xs sm:max-w-md">
+              {rawUrl}
+            </span>
+          )}
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-cyan-400 border border-slate-700 text-[11px] font-medium whitespace-nowrap">
+            {badge}
+          </span>
+        </div>
       </div>
 
       {/* Code Display Area */}
