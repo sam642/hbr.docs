@@ -581,31 +581,7 @@ export MINDWTR_CLOUD_AUTH_TOKENS="${MINDWTR_CLOUD_AUTH_TOKENS:-mwt_secret_token_
 export PATH="/usr/local/bin:/root/.bun/bin:$PATH"
 
 cd /opt/mindwtr
-
-if [ -f "apps/cloud/src/server.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun run apps/cloud/src/server.ts
-elif [ -f "apps/cloud/src/index.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun run apps/cloud/src/index.ts
-elif [ -f "apps/cloud/server.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun run apps/cloud/server.ts
-elif [ -f "src/server.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun run src/server.ts
-elif [ -f "src/index.ts" ] && command -v bun >/dev/null 2>&1; then
-  exec bun run src/index.ts
-elif [ -f "apps/cloud/package.json" ]; then
-  cd apps/cloud
-  exec bun run start 2>/dev/null || exec npm start
-elif [ -f "server.js" ]; then
-  exec /usr/bin/node /opt/mindwtr/server.js
-else
-  exec /usr/bin/node -e "
-    const http = require('http');
-    http.createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', service: 'mindwtr-cloud' }));
-    }).listen(${PORT}, '0.0.0.0');
-  "
-fi
+exec /usr/bin/node /opt/mindwtr/server.js
 EOF
 chmod +x /usr/local/bin/mindwtr-cloud-run
 
